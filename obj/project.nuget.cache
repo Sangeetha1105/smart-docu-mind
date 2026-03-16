@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "rkgMQW0BfEs=",
+  "success": true,
+  "projectFilePath": "/Users/sangeetha/Repositories/Learning/dotnet_ai_learning/smart-docu-mind/smart-docu-mind.csproj",
+  "expectedPackageFiles": [
+    "/Users/sangeetha/.nuget/packages/microsoft.aspnetcore.openapi/10.0.1/microsoft.aspnetcore.openapi.10.0.1.nupkg.sha512",
+    "/Users/sangeetha/.nuget/packages/microsoft.openapi/2.0.0/microsoft.openapi.2.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

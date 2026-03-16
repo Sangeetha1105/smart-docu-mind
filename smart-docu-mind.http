@@ -1,0 +1,6 @@
+@smart_docu_mind_HostAddress = http://localhost:5190
+
+GET {{smart_docu_mind_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
