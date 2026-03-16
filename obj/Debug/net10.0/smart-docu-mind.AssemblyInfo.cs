@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("smart-docu-mind")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8d6c8ed50f2fe30acc19ba8d4d0e955a6192de45")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+1aac05cf93693d7fc65a478a101cdfad8a87810a")]
 [assembly: System.Reflection.AssemblyProductAttribute("smart-docu-mind")]
 [assembly: System.Reflection.AssemblyTitleAttribute("smart-docu-mind")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
