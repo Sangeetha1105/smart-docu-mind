@@ -2,20 +2,13 @@
 bin/
 obj/
 
+# VS Code
+.vs
+.vscode/
+
 # User-specific files
 *.user
 *.suo
-*.userosscache
-*.sln.docstates
-
-# VS Code
-.vscode/
-
-# Visual Studio
-.vs/
-
-# Rider
-.idea/
 
 # Logs
 *.log
@@ -24,21 +17,7 @@ obj/
 .DS_Store
 Thumbs.db
 
-# Environment files
-.env
-
-# Package files
-*.nupkg
-
-# Test results
-TestResults/
-
-# Publish folder
-publish/
-
-# Temporary files
+# Cache / temp
 *.tmp
 *.temp
-
-# obj folder
-obj/
+Assets/Cache/
