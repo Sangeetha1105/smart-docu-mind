@@ -21,9 +21,6 @@ namespace SmartDocuMind.Controllers
             if (file == null || file.Length == 0)
                 return BadRequest("No file uploaded.");
 
-            string text = "";
-            int pageCount = 0;
-
             var allowedExtensions = new[] { ".pdf", ".txt" };
             var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
             if (!allowedExtensions.Contains(ext))
@@ -33,31 +30,59 @@ namespace SmartDocuMind.Controllers
             await using (var stream = new FileStream(tempPath, FileMode.Create))
                 await file.CopyToAsync(stream);
 
-            if (ext == ".txt")
-                text = await System.IO.File.ReadAllTextAsync(tempPath);
+            string content = "";
+            int pageCount = 0;
+            int lineCount = 0;
 
-            if (ext == ".pdf")
+            try
             {
-                try
+                if (ext == ".txt")
                 {
-                    using var document = UglyToad.PdfPig.PdfDocument.Open(tempPath);
+                    content = await System.IO.File.ReadAllTextAsync(tempPath);
+                    lineCount = string.IsNullOrEmpty(content)
+                        ? 0
+                        : content.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+                }
+                else if (ext == ".pdf")
+                {
+                    using var document = PdfDocument.Open(tempPath);
                     pageCount = document.NumberOfPages;
+
+                    foreach (var page in document.GetPages())
+                    {
+                        // Group words by vertical position (Bottom) to count visual lines
+                        var lines = page.GetWords()
+                                        .GroupBy(w => Math.Round(w.BoundingBox.Bottom, 1))
+                                        .OrderBy(g => g.Key);
+
+                        foreach (var line in lines)
+                        {
+                            content += string.Join(" ", line.Select(w => w.Text)) + "\n";
+                        }
+
+                        lineCount += lines.Count();
+                    }
                 }
-                catch
-                {
-                    pageCount = 0;
-                }
+            }
+            catch (Exception ex)
+            {
+                return BadRequest($"Failed to process file: {ex.Message}");
+            }
+            finally
+            {
+                // Optional: delete temp file after processing
+                // System.IO.File.Delete(tempPath);
             }
 
             return Ok(new
             {
                 filename = file.FileName,
                 length = file.Length,
-                lines = string.IsNullOrEmpty(text) ? 0 : text.Split('\n').Length,
+                lines = lineCount,
                 pages = pageCount,
-                tempPath
+                tempPath,
+                contentPreview = content.Length > 500 ? content.Substring(0, 500) + "..." : content
             });
         }
     }
-
 }
