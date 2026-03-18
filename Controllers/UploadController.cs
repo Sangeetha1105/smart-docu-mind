@@ -2,6 +2,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using UglyToad.PdfPig;
+using System.Collections.Concurrent;
 
 namespace SmartDocuMind.Controllers
 {
@@ -14,6 +15,7 @@ namespace SmartDocuMind.Controllers
     [Route("api/[controller]")]
     public class UploadController : ControllerBase
     {
+        private static ConcurrentDictionary<string, string> FileContentStore = new();
         [HttpPost]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadFileAsync(IFormFile file)
@@ -33,6 +35,7 @@ namespace SmartDocuMind.Controllers
             string content = "";
             int pageCount = 0;
             int lineCount = 0;
+
 
             try
             {
@@ -74,6 +77,9 @@ namespace SmartDocuMind.Controllers
                 // System.IO.File.Delete(tempPath);
             }
 
+            var fileId = Guid.NewGuid().ToString();
+            FileContentStore[fileId] = content;
+
             return Ok(new
             {
                 filename = file.FileName,
@@ -81,6 +87,7 @@ namespace SmartDocuMind.Controllers
                 lines = lineCount,
                 pages = pageCount,
                 tempPath,
+                fileId,
                 contentPreview = content.Length > 500 ? content.Substring(0, 500) + "..." : content
             });
         }
