@@ -11,6 +11,11 @@ namespace SmartDocuMind.Controllers
         public string FileId { get; set; } = default!;
         public string Question { get; set; } = default!;
     }
+    public class Message
+{
+    public string role { get; set; } = default!;
+    public string content { get; set; } = default!;
+}
 
     [ApiController]
     [Route("api/[controller]")]
@@ -18,6 +23,9 @@ namespace SmartDocuMind.Controllers
     {
         // In-memory storage
         private static readonly ConcurrentDictionary<string, string> FileContentStore = new();
+
+        private static readonly ConcurrentDictionary<string, List<Message>> ChatHistoryStore 
+    = new();
 
         // =========================
         // 📌 Upload API
@@ -99,66 +107,122 @@ namespace SmartDocuMind.Controllers
         // =========================
         // 🤖 Ask API
         // =========================
-        [HttpPost("ask")]
-        public async Task<IActionResult> AskQuestionAsync([FromBody] QuestionRequest request)
+        [HttpPost("ask-stream")]
+        public async Task AskQuestionStreamAsync([FromBody] QuestionRequest request)
         {
             if (!FileContentStore.TryGetValue(request.FileId, out var content))
-                return NotFound("File not found or expired.");
+            {
+                Response.StatusCode = 404;
+                await Response.WriteAsync("File not found.");
+                return;
+            }
 
             if (string.IsNullOrWhiteSpace(request.Question))
-                return BadRequest("Question cannot be empty.");
-
-            try
             {
-                var httpClient = new HttpClient();
+                Response.StatusCode = 400;
+                await Response.WriteAsync("Question cannot be empty.");
+                return;
+            }
 
-                // Limit content size (VERY IMPORTANT)
+            Response.ContentType = "text/plain";
+
+            var httpClient = new HttpClient();
+
+            // =========================
+            // Init chat history
+            // =========================
+            if (!ChatHistoryStore.ContainsKey(request.FileId))
+            {
+                ChatHistoryStore[request.FileId] = new List<Message>();
+            }
+
+            var chatHistory = ChatHistoryStore[request.FileId];
+
+            // Add system message once
+            if (chatHistory.Count == 0)
+            {
                 var shortContent = content.Length > 3000
                     ? content.Substring(0, 3000)
                     : content;
 
-                var prompt = $@"
-You are a helpful assistant.
-Answer ONLY from the document.
-
-Document:
-{shortContent}
-
-Question:
-{request.Question}
-";
-
-                var requestBody = new
+                chatHistory.Add(new Message
                 {
-                    model = "llama3",
-                    prompt = prompt,
-                    stream = true
-                };
-
-                var response = await httpClient.PostAsJsonAsync(
-                    "http://localhost:11434/api/generate",
-                    requestBody
-                );
-
-                var result = await response.Content.ReadFromJsonAsync<OllamaResponse>();
-
-                return Ok(new
-                {
-                    request.Question,
-                    answer = result?.response
+                    role = "system",
+                    content = $"You are a helpful assistant. Answer ONLY from this document:\n{shortContent}"
                 });
             }
-            catch (Exception ex)
+
+            // Add user question
+            chatHistory.Add(new Message
             {
-                return StatusCode(500, $"AI Error: {ex.Message}");
+                role = "user",
+                content = request.Question
+            });
+
+            var requestBody = new
+            {
+                model = "llama3",
+                messages = chatHistory,
+                stream = true
+            };
+
+            var httpRequest = new HttpRequestMessage(HttpMethod.Post, "http://localhost:11434/api/chat")
+            {
+                Content = JsonContent.Create(requestBody)
+            };
+
+            var response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead);
+
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var reader = new StreamReader(stream);
+
+            string fullAnswer = "";
+
+            while (!reader.EndOfStream)
+            {
+                var line = await reader.ReadLineAsync();
+
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                try
+                {
+                    var chunk = System.Text.Json.JsonSerializer.Deserialize<OllamaStreamChunk>(line);
+
+                    var token = chunk?.message?.content;
+
+                    if (!string.IsNullOrEmpty(token))
+                    {
+                        fullAnswer += token;
+
+                        // Send token immediately to client
+                        await Response.WriteAsync(token);
+                        await Response.Body.FlushAsync();
+                    }
+                }
+                catch
+                {
+                    // ignore malformed chunks
+                }
+            }
+
+            // Save assistant full response
+            chatHistory.Add(new Message
+            {
+                role = "assistant",
+                content = fullAnswer
+            });
+
+            // Limit memory
+            if (chatHistory.Count > 20)
+            {
+                chatHistory.RemoveAt(1);
             }
         }
-
-        // Helper class
-        public class OllamaResponse
-        {
-            public string response { get; set; }
-        }
+        public class OllamaStreamChunk
+{
+    public Message message { get; set; }
+}
     }
 
 }
