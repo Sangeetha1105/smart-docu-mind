@@ -1,8 +1,9 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using UglyToad.PdfPig;
-using UglyToad.PdfPig.Content;
 using System.Collections.Concurrent;
+using System.Text.Json;
+using System.Net.Http.Json;
 
 namespace SmartDocuMind.Controllers
 {
@@ -11,24 +12,25 @@ namespace SmartDocuMind.Controllers
         public string FileId { get; set; } = default!;
         public string Question { get; set; } = default!;
     }
+
     public class Message
-{
-    public string role { get; set; } = default!;
-    public string content { get; set; } = default!;
-}
+    {
+        public string role { get; set; } = default!;
+        public string content { get; set; } = default!;
+    }
 
     [ApiController]
     [Route("api/[controller]")]
     public class UploadController : ControllerBase
     {
-        // In-memory storage
-        private static readonly ConcurrentDictionary<string, string> FileContentStore = new();
-
-        private static readonly ConcurrentDictionary<string, List<Message>> ChatHistoryStore 
-    = new();
+        // =========================
+        // In-memory stores
+        // =========================
+        private static readonly ConcurrentDictionary<string, List<string>> FileChunksStore = new();
+        private static readonly ConcurrentDictionary<string, List<Message>> ChatHistoryStore = new();
 
         // =========================
-        // 📌 Upload API
+        // Upload API
         // =========================
         [HttpPost]
         [Consumes("multipart/form-data")]
@@ -41,44 +43,34 @@ namespace SmartDocuMind.Controllers
             var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
 
             if (!allowedExtensions.Contains(ext))
-                return BadRequest("Invalid file type. Only PDF or TXT allowed.");
+                return BadRequest("Only PDF or TXT allowed.");
 
             var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}_{file.FileName}");
-
             await using (var stream = new FileStream(tempPath, FileMode.Create))
                 await file.CopyToAsync(stream);
 
             string content = "";
-            int pageCount = 0;
             int lineCount = 0;
 
             try
             {
-                // ================= TXT =================
                 if (ext == ".txt")
                 {
                     content = await System.IO.File.ReadAllTextAsync(tempPath);
-                    lineCount = string.IsNullOrEmpty(content)
-                        ? 0
-                        : content.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+                    lineCount = string.IsNullOrEmpty(content) ? 0 :
+                        content.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
                 }
-                // ================= PDF =================
                 else if (ext == ".pdf")
                 {
                     using var document = PdfDocument.Open(tempPath);
-                    pageCount = document.NumberOfPages;
-
                     foreach (var page in document.GetPages())
                     {
-                        // Group words by approximate line (bottom coordinate)
                         var lines = page.GetWords()
                             .GroupBy(w => Math.Round(w.BoundingBox.Bottom, 1))
                             .OrderBy(g => g.Key);
 
                         foreach (var line in lines)
-                        {
                             content += string.Join(" ", line.Select(w => w.Text)) + "\n";
-                        }
 
                         lineCount += lines.Count();
                     }
@@ -89,9 +81,12 @@ namespace SmartDocuMind.Controllers
                 return BadRequest($"Error processing file: {ex.Message}");
             }
 
-            // Store content with FileId
+            // =========================
+            // Split into manageable chunks (preprocessed)
+            // =========================
+            var chunks = SplitTextIntoChunks(content, 2000);
             var fileId = Guid.NewGuid().ToString();
-            FileContentStore[fileId] = content;
+            FileChunksStore[fileId] = chunks;
 
             return Ok(new
             {
@@ -99,18 +94,30 @@ namespace SmartDocuMind.Controllers
                 fileName = file.FileName,
                 file.Length,
                 lines = lineCount,
-                pages = pageCount,
                 preview = content.Length > 300 ? content.Substring(0, 300) + "..." : content
             });
         }
 
+        private List<string> SplitTextIntoChunks(string text, int chunkSize = 2000)
+        {
+            var chunks = new List<string>();
+            int start = 0;
+            while (start < text.Length)
+            {
+                int length = Math.Min(chunkSize, text.Length - start);
+                chunks.Add(text.Substring(start, length));
+                start += length;
+            }
+            return chunks;
+        }
+
         // =========================
-        // 🤖 Ask API
+        // Ask API (fast retrieval + streaming)
         // =========================
         [HttpPost("ask-stream")]
         public async Task AskQuestionStreamAsync([FromBody] QuestionRequest request)
         {
-            if (!FileContentStore.TryGetValue(request.FileId, out var content))
+            if (!FileChunksStore.TryGetValue(request.FileId, out var chunks))
             {
                 Response.StatusCode = 404;
                 await Response.WriteAsync("File not found.");
@@ -125,40 +132,50 @@ namespace SmartDocuMind.Controllers
             }
 
             Response.ContentType = "text/plain";
-
             var httpClient = new HttpClient();
 
             // =========================
-            // Init chat history
+            // FAST keyword retrieval
+            // Only pick 2–3 relevant chunks
+            // =========================
+            var questionLower = request.Question.ToLower();
+            var relevantChunks = chunks
+                .Where(c => c.IndexOf(questionLower, StringComparison.OrdinalIgnoreCase) >= 0)
+                .Take(2)
+                .Select(c => c.Length > 2000 ? c.Substring(0, 2000) : c)
+                .ToList();
+
+            if (!relevantChunks.Any())
+                relevantChunks = chunks.Take(2).ToList(); // fallback
+
+            var context = string.Join("\n", relevantChunks);
+
+            // =========================
+            // Chat memory
             // =========================
             if (!ChatHistoryStore.ContainsKey(request.FileId))
-            {
                 ChatHistoryStore[request.FileId] = new List<Message>();
-            }
 
             var chatHistory = ChatHistoryStore[request.FileId];
 
-            // Add system message once
             if (chatHistory.Count == 0)
             {
-                var shortContent = content.Length > 3000
-                    ? content.Substring(0, 3000)
-                    : content;
-
                 chatHistory.Add(new Message
                 {
                     role = "system",
-                    content = $"You are a helpful assistant. Answer ONLY from this document:\n{shortContent}"
+                    content = $"You are a helpful assistant. Answer ONLY from the following document sections:\n{context}"
                 });
             }
 
-            // Add user question
             chatHistory.Add(new Message
             {
                 role = "user",
                 content = request.Question
             });
 
+            // =========================
+            // Call Ollama streaming API
+            // =========================
             var requestBody = new
             {
                 model = "llama3",
@@ -172,30 +189,32 @@ namespace SmartDocuMind.Controllers
             };
 
             var response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead);
-
             using var stream = await response.Content.ReadAsStreamAsync();
             using var reader = new StreamReader(stream);
 
             string fullAnswer = "";
 
-            while (!reader.EndOfStream)
+            // =========================
+            // Stream tokens immediately (async-safe)
+            // =========================
+            string? line;
+            while ((line = await reader.ReadLineAsync()) != null)
             {
-                var line = await reader.ReadLineAsync();
-
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
+                if (string.IsNullOrWhiteSpace(line)) continue;
 
                 try
                 {
-                    var chunk = System.Text.Json.JsonSerializer.Deserialize<OllamaStreamChunk>(line);
-
-                    var token = chunk?.message?.content;
+                    using var doc = JsonDocument.Parse(line);
+                    var token = doc.RootElement
+                        .GetProperty("message")
+                        .GetProperty("content")
+                        .GetString();
 
                     if (!string.IsNullOrEmpty(token))
                     {
                         fullAnswer += token;
 
-                        // Send token immediately to client
+                        // send immediately to client
                         await Response.WriteAsync(token);
                         await Response.Body.FlushAsync();
                     }
@@ -206,23 +225,17 @@ namespace SmartDocuMind.Controllers
                 }
             }
 
-            // Save assistant full response
+            // =========================
+            // Save assistant response
+            // =========================
             chatHistory.Add(new Message
             {
                 role = "assistant",
                 content = fullAnswer
             });
 
-            // Limit memory
             if (chatHistory.Count > 20)
-            {
-                chatHistory.RemoveAt(1);
-            }
+                chatHistory.RemoveAt(1); // keep system message
         }
-        public class OllamaStreamChunk
-{
-    public Message message { get; set; }
-}
     }
-
 }
