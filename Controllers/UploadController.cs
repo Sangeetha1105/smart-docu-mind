@@ -1,37 +1,26 @@
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using UglyToad.PdfPig;
-using System.Collections.Concurrent;
-using System.Text.Json;
+using SmartDocuMind.Models;
+using SmartDocuMind.Services;
 using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace SmartDocuMind.Controllers
 {
-    public class QuestionRequest
-    {
-        public string FileId { get; set; } = default!;
-        public string Question { get; set; } = default!;
-    }
-
-    public class Message
-    {
-        public string role { get; set; } = default!;
-        public string content { get; set; } = default!;
-    }
-
     [ApiController]
     [Route("api/[controller]")]
     public class UploadController : ControllerBase
     {
-        // =========================
-        // In-memory stores
-        // =========================
-        private static readonly ConcurrentDictionary<string, List<string>> FileChunksStore = new();
-        private static readonly ConcurrentDictionary<string, List<Message>> ChatHistoryStore = new();
+        private readonly IFileProcessor _fileProcessor;
+        private readonly IChatMemoryService _chatMemory;
+        private readonly HttpClient _httpClient;
 
-        // =========================
-        // Upload API
-        // =========================
+        public UploadController(IFileProcessor fileProcessor, IChatMemoryService chatMemory, HttpClient httpClient)
+        {
+            _fileProcessor = fileProcessor;
+            _chatMemory = chatMemory;
+            _httpClient = httpClient;
+        }
+
         [HttpPost]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadFileAsync(IFormFile file)
@@ -41,7 +30,6 @@ namespace SmartDocuMind.Controllers
 
             var allowedExtensions = new[] { ".pdf", ".txt" };
             var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-
             if (!allowedExtensions.Contains(ext))
                 return BadRequest("Only PDF or TXT allowed.");
 
@@ -49,75 +37,31 @@ namespace SmartDocuMind.Controllers
             await using (var stream = new FileStream(tempPath, FileMode.Create))
                 await file.CopyToAsync(stream);
 
-            string content = "";
-            int lineCount = 0;
+            string content;
+            try { content = await _fileProcessor.ExtractTextAsync(tempPath); }
+            catch (Exception ex) { return BadRequest($"Error processing file: {ex.Message}"); }
 
-            try
-            {
-                if (ext == ".txt")
-                {
-                    content = await System.IO.File.ReadAllTextAsync(tempPath);
-                    lineCount = string.IsNullOrEmpty(content) ? 0 :
-                        content.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-                }
-                else if (ext == ".pdf")
-                {
-                    using var document = PdfDocument.Open(tempPath);
-                    foreach (var page in document.GetPages())
-                    {
-                        var lines = page.GetWords()
-                            .GroupBy(w => Math.Round(w.BoundingBox.Bottom, 1))
-                            .OrderBy(g => g.Key);
-
-                        foreach (var line in lines)
-                            content += string.Join(" ", line.Select(w => w.Text)) + "\n";
-
-                        lineCount += lines.Count();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                return BadRequest($"Error processing file: {ex.Message}");
-            }
-
-            // =========================
-            // Split into manageable chunks (preprocessed)
-            // =========================
-            var chunks = SplitTextIntoChunks(content, 2000);
+            var chunks = _fileProcessor.SplitIntoChunks(content, 2000);
             var fileId = Guid.NewGuid().ToString();
-            FileChunksStore[fileId] = chunks;
+            _chatMemory.SaveFileChunks(fileId, chunks);
 
-            return Ok(new
+            int lineCount = string.IsNullOrEmpty(content) ? 0 : content.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+
+            return Ok(new UploadResult
             {
-                fileId,
-                fileName = file.FileName,
-                file.Length,
-                lines = lineCount,
-                preview = content.Length > 300 ? content.Substring(0, 300) + "..." : content
+                FileId = fileId,
+                FileName = file.FileName,
+                FileSize = file.Length,
+                Lines = lineCount,
+                Preview = content.Length > 300 ? content[..300] + "..." : content
             });
         }
 
-        private List<string> SplitTextIntoChunks(string text, int chunkSize = 2000)
-        {
-            var chunks = new List<string>();
-            int start = 0;
-            while (start < text.Length)
-            {
-                int length = Math.Min(chunkSize, text.Length - start);
-                chunks.Add(text.Substring(start, length));
-                start += length;
-            }
-            return chunks;
-        }
-
-        // =========================
-        // Ask API (fast retrieval + streaming)
-        // =========================
         [HttpPost("ask-stream")]
         public async Task AskQuestionStreamAsync([FromBody] QuestionRequest request)
         {
-            if (!FileChunksStore.TryGetValue(request.FileId, out var chunks))
+            var chunks = _chatMemory.GetFileChunks(request.FileId);
+            if (!chunks.Any())
             {
                 Response.StatusCode = 404;
                 await Response.WriteAsync("File not found.");
@@ -132,110 +76,59 @@ namespace SmartDocuMind.Controllers
             }
 
             Response.ContentType = "text/plain";
-            var httpClient = new HttpClient();
 
-            // =========================
-            // FAST keyword retrieval
-            // Only pick 2–3 relevant chunks
-            // =========================
-            var questionLower = request.Question.ToLower();
             var relevantChunks = chunks
-                .Where(c => c.IndexOf(questionLower, StringComparison.OrdinalIgnoreCase) >= 0)
+                .Where(c => c.Contains(request.Question, StringComparison.OrdinalIgnoreCase))
                 .Take(2)
-                .Select(c => c.Length > 2000 ? c.Substring(0, 2000) : c)
                 .ToList();
 
             if (!relevantChunks.Any())
-                relevantChunks = chunks.Take(2).ToList(); // fallback
+                relevantChunks = chunks.Take(2).ToList();
 
             var context = string.Join("\n", relevantChunks);
 
-            // =========================
-            // Chat memory
-            // =========================
-            if (!ChatHistoryStore.ContainsKey(request.FileId))
-                ChatHistoryStore[request.FileId] = new List<Message>();
-
-            var chatHistory = ChatHistoryStore[request.FileId];
-
-            if (chatHistory.Count == 0)
+            var history = _chatMemory.GetOrCreateHistory(request.FileId);
+            if (!history.Any())
             {
-                chatHistory.Add(new Message
+                history.Add(new Message
                 {
-                    role = "system",
-                    content = $"You are a helpful assistant. Answer ONLY from the following document sections:\n{context}"
+                    Role = "system",
+                    Content = $"You are a helpful assistant. Answer ONLY from the following document sections:\n{context}"
                 });
             }
 
-            chatHistory.Add(new Message
-            {
-                role = "user",
-                content = request.Question
-            });
+            history.Add(new Message { Role = "user", Content = request.Question });
 
-            // =========================
-            // Call Ollama streaming API
-            // =========================
-            var requestBody = new
-            {
-                model = "llama3",
-                messages = chatHistory,
-                stream = true
-            };
-
+            var requestBody = new { model = "llama3", messages = history, stream = true };
             var httpRequest = new HttpRequestMessage(HttpMethod.Post, "http://localhost:11434/api/chat")
             {
                 Content = JsonContent.Create(requestBody)
             };
 
-            var response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead);
+            var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead);
             using var stream = await response.Content.ReadAsStreamAsync();
             using var reader = new StreamReader(stream);
 
             string fullAnswer = "";
-
-            // =========================
-            // Stream tokens immediately (async-safe)
-            // =========================
             string? line;
             while ((line = await reader.ReadLineAsync()) != null)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
-
                 try
                 {
                     using var doc = JsonDocument.Parse(line);
-                    var token = doc.RootElement
-                        .GetProperty("message")
-                        .GetProperty("content")
-                        .GetString();
-
+                    var token = doc.RootElement.GetProperty("message").GetProperty("content").GetString();
                     if (!string.IsNullOrEmpty(token))
                     {
                         fullAnswer += token;
-
-                        // send immediately to client
                         await Response.WriteAsync(token);
                         await Response.Body.FlushAsync();
                     }
                 }
-                catch
-                {
-                    // ignore malformed chunks
-                }
+                catch { }
             }
 
-            // =========================
-            // Save assistant response
-            // =========================
-            chatHistory.Add(new Message
-            {
-                role = "assistant",
-                content = fullAnswer
-            });
-
-            if (chatHistory.Count > 20)
-                chatHistory.RemoveAt(1); // keep system message
+            _chatMemory.SaveMessage(request.FileId, new Message { Role = "assistant", Content = fullAnswer });
         }
     }
 }
