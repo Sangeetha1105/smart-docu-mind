@@ -1,35 +1,35 @@
+using System.Text.Json.Serialization;
 using SmartDocuMind.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// =========================
-// Add services to DI container
-// =========================
-builder.Services.AddControllers();
+// Convert enums to string instead of numbers
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
 
-// Register your services
-builder.Services.AddSingleton<IFileProcessor, FileProcessor>();
-builder.Services.AddSingleton<IChatMemoryService, ChatMemoryService>();
-
-// HttpClient for streaming API
-builder.Services.AddHttpClient();
-
-// Swagger for testing
+// Swagger configuration
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// your existing DI
+builder.Services.AddSingleton<IFileProcessor, FileProcessor>();
+builder.Services.AddSingleton<IChatMemoryService, ChatMemoryService>();
+
+builder.Services.AddHttpClient<OllamaAIService>();
+builder.Services.AddHttpClient<OpenAIAIService>();
+
+builder.Services.AddTransient<IAIService>(sp => sp.GetRequiredService<OllamaAIService>());
+builder.Services.AddTransient<IAIService>(sp => sp.GetRequiredService<OpenAIAIService>());
+
 var app = builder.Build();
 
-// =========================
-// Middleware
-// =========================
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSwagger();
+app.UseSwaggerUI();
 
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
 app.UseAuthorization();
 
 app.MapControllers();
