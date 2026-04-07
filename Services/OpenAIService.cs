@@ -7,7 +7,7 @@ using System.Text.Json;
 namespace SmartDocuMind.Services
 {
     // Handles communication with OpenAI chat completions API
-    public class OpenAIAIService : IAIService
+    public class OpenAIService : IAIService
     {
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
@@ -15,7 +15,7 @@ namespace SmartDocuMind.Services
         // Name used to match request.Provider
         public string ProviderName => "openai";
 
-        public OpenAIAIService(HttpClient httpClient, IConfiguration configuration)
+        public OpenAIService(HttpClient httpClient, IConfiguration configuration)
         {
             _httpClient = httpClient;
             _configuration = configuration;

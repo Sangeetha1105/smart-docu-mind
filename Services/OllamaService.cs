@@ -5,13 +5,13 @@ using System.Text.Json;
 
 namespace SmartDocuMind.Services
 {
-    public class OllamaAIService : IAIService
+    public class OllamaService : IAIService
     {
         private readonly HttpClient _httpClient;
 
         public string ProviderName => "ollama";
 
-        public OllamaAIService(HttpClient httpClient)
+        public OllamaService(HttpClient httpClient)
         {
             _httpClient = httpClient;
         }

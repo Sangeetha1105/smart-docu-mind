@@ -18,11 +18,11 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddSingleton<IFileProcessor, FileProcessor>();
 builder.Services.AddSingleton<IChatMemoryService, ChatMemoryService>();
 
-builder.Services.AddHttpClient<OllamaAIService>();
-builder.Services.AddHttpClient<OpenAIAIService>();
+builder.Services.AddHttpClient<OllamaService>();
+builder.Services.AddHttpClient<OpenAIService>();
 
-builder.Services.AddTransient<IAIService>(sp => sp.GetRequiredService<OllamaAIService>());
-builder.Services.AddTransient<IAIService>(sp => sp.GetRequiredService<OpenAIAIService>());
+builder.Services.AddTransient<IAIService>(sp => sp.GetRequiredService<OllamaService>());
+builder.Services.AddTransient<IAIService>(sp => sp.GetRequiredService<OpenAIService>());
 
 var app = builder.Build();
 

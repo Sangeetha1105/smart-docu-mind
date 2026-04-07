@@ -1,6 +1,24 @@
-@smart_docu_mind_HostAddress = http://localhost:5190
+@host = http://localhost:5190
+@filePath = /absolute/path/to/sample.txt
+@fileId = replace-with-file-id
 
-GET {{smart_docu_mind_HostAddress}}/weatherforecast/
-Accept: application/json
+### Upload a document
+POST {{host}}/api/upload
+Content-Type: multipart/form-data; boundary=SmartDocuMindBoundary
 
-###
+--SmartDocuMindBoundary
+Content-Disposition: form-data; name="file"; filename="sample.txt"
+Content-Type: text/plain
+
+< {{filePath}}
+--SmartDocuMindBoundary--
+
+### Ask a question about the uploaded document
+POST {{host}}/api/upload/ask-stream
+Content-Type: application/json
+
+{
+  "fileId": "{{fileId}}",
+  "question": "Summarize this document.",
+  "aiMode": "balanced"
+}

@@ -1,69 +1,108 @@
 # Smart Docu Mind
 
-AI-powered document assistant that allows users to upload documents and ask questions about their content.
-The system reads the document, extracts the text, and uses AI to answer user queries based on the uploaded file.
+Smart Docu Mind is a junior-friendly ASP.NET Core Web API project that lets users upload a PDF or text file, extract its content, and ask questions about the document using multiple AI modes.
 
-## 🚀 Features
+The project is designed to show practical backend skills:
+- file upload and validation
+- PDF/text extraction
+- in-memory chat history
+- API integration with OpenAI and Ollama
+- fallback handling between AI modes
+- Swagger-based API testing
 
-* Upload documents (PDF, text files, etc.)
-* Extract and process document content
-* Ask questions about the uploaded document
-* AI-powered responses based on document context
-* REST API endpoints for document interaction
-* Interactive API documentation with Swagger
+## Features
 
-## 🛠 Tech Stack
+- Upload `.pdf` and `.txt` documents
+- Extract and preview document text
+- Ask follow-up questions about uploaded content
+- Choose between `fast`, `balanced`, and `advanced` AI modes
+- Automatically fall back when a higher mode is unavailable
+- Show clear failure reasons when a mode fails
 
-* .NET Web API
-* ASP.NET Core
-* Swagger / OpenAPI
-* AI API integration
-* Document parsing libraries
+## Tech Stack
 
-## 📂 Project Structure
+Technologies used to build this project:
 
-Controllers – API endpoints
-Services – Business logic
-Models – Data models
-AI – AI integration logic
-DocumentProcessing – Document parsing logic
+- ASP.NET Core Web API
+- .NET 8
+- Swagger / OpenAPI
+- [PdfPig](https://github.com/UglyToad/PdfPig) for PDF text extraction
+- OpenAI API for advanced mode
+- Ollama for local fast and balanced modes
 
-## ⚙️ Getting Started
+## Project Structure
 
-### Prerequisites
+- `Controllers/` API endpoints
+- `Models/` request and response models
+- `Services/` file processing, chat memory, and AI provider integrations
+- `Program.cs` dependency injection and app startup
 
-* .NET SDK installed
-* Git installed
+## AI Modes
 
-### Run the project
+- `fast` -> Ollama with `llama3`
+- `balanced` -> Ollama with `mistral`
+- `advanced` -> OpenAI with `gpt-4o-mini`
 
-1. Clone the repository
+Fallback behavior:
+- `advanced` falls back to `balanced`, then `fast`
+- `balanced` falls back to `fast`
 
-git clone https://github.com/Sangeetha1105/smart-docu-mind.git
+## Prerequisites
 
-2. Navigate to the project folder
+Requirements to run this project locally:
 
-cd smart-docu-mind
+- .NET 8 SDK
+- Ollama installed locally if you want to use `fast` or `balanced`
+- An OpenAI API key if you want to use `advanced`
 
-3. Run the API
+## Local Setup
 
+1. Clone the repository.
+2. Open the project folder.
+3. Set your OpenAI API key as an environment variable:
+
+```bash
+export OpenAI__ApiKey="your-api-key"
+```
+
+4. Start Ollama if you want local models:
+
+```bash
+ollama serve
+ollama pull mistral
+ollama pull llama3
+```
+
+5. Run the API:
+
+```bash
 dotnet run
+```
 
-4. Open Swagger
+6. Open Swagger:
 
-https://localhost:5001/swagger
+- [http://localhost:5190/swagger](http://localhost:5190/swagger)
 
-## 📌 Future Improvements
+## Example API Flow
 
-* Support for more document formats
-* Chat-style interaction with documents
-* Document embedding and semantic search
-* Better AI context handling
+1. Upload a document using `POST /api/upload`
+2. Copy the returned `fileId`
+3. Ask a question using `POST /api/upload/ask-stream`
 
-## 👩‍💻 Author
+You can also use the included [smart-docu-mind.http](./smart-docu-mind.http) file for quick local testing.
 
-Sangeetha
+## What I Learned
 
----
+- how to build a Web API in ASP.NET Core
+- how to extract text from uploaded documents
+- how to stream AI responses back to the client
+- how to structure provider-based services with dependency injection
+- how to design fallback logic for AI integrations
 
-⭐ If you found this project useful, feel free to star the repository.
+## Future Improvements
+
+- persistent storage instead of in-memory chat history
+- semantic search or embeddings for better retrieval
+- authentication and per-user document history
+- unit and integration tests
+- a frontend UI for document upload and chat
